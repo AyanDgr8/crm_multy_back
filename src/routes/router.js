@@ -91,20 +91,20 @@ router.get('/customers/team', authenticateToken, checkPermission('view_team_cust
 router.get('/customers/assigned', authenticateToken, checkPermission('view_assigned_customers'), getAllCustomers);
 
 // Add these after your customer/new route
-router.patch('/customers/phone/:mobile/updates', authenticateToken, checkPermission('edit_customer'), updateCustomer);
+router.patch('/customers/phone/:phone_no/updates', authenticateToken, checkPermission('edit_customer'), updateCustomer);
 router.put('/customers/:id', authenticateToken, checkPermission('edit_customer'), updateCustomer);
 
 router.delete('/customers/:id', authenticateToken, checkPermission('delete_customer'), deleteCustomer);
 router.post('/customers/delete-multiple', authenticateToken, checkPermission('delete_customer'), deleteMultipleCustomers);
 
 // Route to check if customer exists by phone number
-router.get('/customers/phone/:mobile', authenticateToken, checkPermission('view_customer'), checkCustomerByPhone);
+router.get('/customers/phone/:phone_no', authenticateToken, checkPermission('view_customer'), checkCustomerByPhone);
 
 // Route to create a new customer record
 router.post('/customer/new', authenticateToken, checkPermission('create_customer'), makeNewRecord);
 
 // Route to create a new customer record with a new number 
-router.post('/customer/new/:mobile', authenticateToken, checkPermission('create_customer'), makeNewRecord);
+router.post('/customer/new/:phone_no', authenticateToken, checkPermission('create_customer'), makeNewRecord);
 
 // Route to create a new customer
 router.post('/customers/new', authenticateToken, checkPermission('create_customer'), createCustomer);

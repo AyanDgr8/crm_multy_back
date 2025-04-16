@@ -18,16 +18,13 @@ export const searchCustomers = async (req, res) => {
     
     // Define searchable fields based on new schema
     const searchFields = [
-      'c.loan_card_no', 'c.c_name', 'c.CRN', 'c.product', 'c.bank_name', 'c.banker_name',
-      'c.agent_name', 'c.tl_name', 'c.fl_supervisor', 'c.DPD_vintage',
-      'c.POS', 'c.emi_AMT', 'c.loan_AMT', 'c.paid_AMT', 'c.paid_date',
-      'c.settl_AMT', 'c.shots',
-      'c.resi_address', 'c.pincode', 'c.office_address', 
-      'c.mobile', 'c.ref_mobile', 
-      'c.mobile_3', 'c.mobile_4', 'c.mobile_5', 'c.mobile_6', 'c.mobile_7', 'c.mobile_8',
-      'c.calling_code', 'c.calling_feedback',
-      'c.field_feedback', 'c.new_track_no', 'c.field_code', 'c.C_unique_id',
-      'c.last_updated', 'c.id'
+      'c.first_name', 'c.last_name', 'c.middle_name', 
+      'c.gender', 'c.email_id', 'c.date_of_birth',
+      'c.phone_no_primary', 'c.phone_no_secondary', 'c.whatsapp_num',
+      'c.address', 'c.country', 'c.contact_type','c.company_name',
+      'c.disposition', 'c.other_location',
+      'c.designation', 'c.website', 'c.agent_name',
+      'c.C_unique_id', 'c.last_updated', 'c.id', 'c.agent_name'
     ];
 
     const searchConditions = searchFields.map(field => `${field} LIKE ?`).join(' OR ');
@@ -435,7 +432,7 @@ export const getTeams = async (req, res) => {
 export const checkDuplicates = async (req, res) => {
     try {
         const connection = await connectDB();
-        const { currentCustomerId, mobile, CRN } = req.body;
+        const { currentCustomerId, phone_no_primary } = req.body;
         
         const conditions = [];
         const params = [currentCustomerId]; // Start with customerId for the != condition
@@ -447,14 +444,14 @@ export const checkDuplicates = async (req, res) => {
         };
 
         // Add conditions for each field that needs to be checked
-        if (isValidValue(CRN)) {
-            conditions.push('(CRN = ? AND CRN IS NOT NULL AND CRN != "")');
-            params.push(CRN);
+        if (isValidValue(phone_no_primary)) {
+            conditions.push('(phone_no_primary = ? AND phone_no_primary IS NOT NULL AND phone_no_primary != "")');
+            params.push(phone_no_primary);
         }
 
         if (conditions.length > 0) {
             const [existRecords] = await connection.query(`
-                SELECT id, mobile, CRN, c_name
+                SELECT id, phone_no_primary, first_name
                 FROM customers 
                 WHERE id != ? ${conditions.length > 0 ? 'AND (' + conditions.join(' OR ') + ')' : ''}
             `, params);
@@ -462,13 +459,10 @@ export const checkDuplicates = async (req, res) => {
             // Check which fields are in use and push detailed error messages
             if (existRecords.length > 0) {
                 existRecords.forEach(record => {
-                    const customerInfo = `${record.c_name} `;
+                    const customerInfo = `${record.first_name} `;
                     
-                    if (isValidValue(mobile) && isValidValue(record.mobile) && record.mobile === mobile) {
-                        duplicates.push(`Phone number ${mobile} is already registered with customer ${customerInfo}`);
-                    }
-                    if (isValidValue(CRN) && isValidValue(record.CRN) && record.CRN === CRN) {
-                        duplicates.push(`CRN ${CRN} is already registered with customer ${customerInfo}`);
+                    if (isValidValue(phone_no_primary) && isValidValue(record.phone_no_primary) && record.phone_no_primary === phone_no_primary) {
+                        duplicates.push(`Phone number ${phone_no_primary} is already registered with customer ${customerInfo}`);
                     }
                 });
             }
@@ -494,7 +488,7 @@ export const checkDuplicates = async (req, res) => {
 export const getTeamRecords = async (req, res) => {
   try {
       const connection = await connectDB();
-      const query = `SELECT c_name, mobile FROM customers ORDER BY last_updated DESC, id DESC`;
+      const query = `SELECT first_name, phone_no_primary FROM customers ORDER BY last_updated DESC, id DESC`;
       const [records] = await connection.query(query);
 
       // Check if request body is empty
@@ -510,10 +504,10 @@ export const getTeamRecords = async (req, res) => {
       }
 
       // If body exists, apply field mapping
-      const { first_name = "c_name", number = "mobile" } = req.body;
+      const { first_name = "first_name", number = "phone_no_primary" } = req.body;
       const mappedRecords = records.map(record => ({
-        [first_name]: record.c_name,
-        [number]: record.mobile,
+        [first_name]: record.first_name,
+        [number]: record.phone_no_primary,
         priority: "1"
       }));
 

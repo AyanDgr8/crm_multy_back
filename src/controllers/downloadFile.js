@@ -35,15 +35,13 @@ export const downloadCustomerData = async (req, res) => {
 
         let query = `
             SELECT DISTINCT
-                c.loan_card_no, c.c_name, c.product, c.CRN, c.bank_name,
-                c.banker_name, c.agent_name, c.tl_name, c.fl_supervisor,
-                c.DPD_vintage, c.POS, c.emi_AMT, c.loan_AMT, c.paid_AMT,
-                c.paid_date, c.settl_AMT, c.shots, c.resi_address, c.pincode,
-                c.office_address, c.mobile, c.ref_mobile, 
-                c.mobile_3, c.mobile_4, c.mobile_5, c.mobile_6, c.mobile_7, c.mobile_8,
-                c.calling_code,
-                c.calling_feedback, c.field_feedback, c.new_track_no,
-                c.field_code, c.C_unique_id, c.date_created, c.last_updated,
+                c.first_name, c.last_name, c.middle_name, 
+                c.gender, c.email_id,
+                c.phone_no_primary, c.phone_no_secondary, c.whatsapp_num,
+                c.address, c.country, c.contact_type, c.company_name,
+                c.dispositition, c.other_location,
+                c.designation, c.website, c.agent_name,
+                c.C_unique_id, c.date_created, c.last_updated,
                 c.scheduled_at
             FROM customers c
             INNER JOIN users agent_user ON c.agent_name = agent_user.username

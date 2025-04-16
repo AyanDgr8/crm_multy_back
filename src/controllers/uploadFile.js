@@ -88,123 +88,115 @@ export const uploadCustomerData = async (req, res) => {
             }
 
             // Create a map of valid usernames and their team_ids
-            const validAgents = {};
-            userResults.forEach(row => {
-                validAgents[row.username] = row.team_id;
-            });
-
-            // Get the latest C_unique_id
-            const [lastIdResult] = await connection.query(
-                'SELECT C_unique_id FROM customers ORDER BY CAST(SUBSTRING(C_unique_id, 4) AS UNSIGNED) DESC LIMIT 1'
-            );
-            
-            const lastId = lastIdResult[0]?.C_unique_id || 'DF_0';
-            const lastNumericPart = parseInt(lastId.split('_')[1]) || 0;
+            const validAgents = new Map(userResults.map(user => [user.username, user.team_id]));
 
             // Check for duplicates first
             const duplicates = [];
             const newRecords = [];
+            const invalidAgentRecords = [];
 
             // Process each record
-            for (const [index, record] of customerData.entries()) {
+            for (const record of customerData) {
+                const phone = record[headerMapping['phone_no_primary']];
+                const email = record[headerMapping['email_id']];
+                const firstName = record[headerMapping['first_name']];
+                const agentName = record[headerMapping['agent_name']];
+
                 // Skip empty records
-                if (!record[headerMapping['c_name']] || !record[headerMapping['mobile']] || !record[headerMapping['agent_name']]) {
+                if (!firstName || !phone || !agentName) {
                     continue;
                 }
 
-                // Check if agent exists in users table
-                if (!validAgents[record[headerMapping['agent_name']]]) {
-                    return res.status(400).json({
-                        message: `Invalid agent name: ${record[headerMapping['agent_name']]}. Agent must be a registered user.`
+                // Check if agent exists
+                if (!validAgents.has(agentName)) {
+                    invalidAgentRecords.push({
+                        record,
+                        error: `Invalid agent name: ${agentName}`
                     });
+                    continue;
                 }
 
-                // Check for duplicates based on CRN + loan_card_no + c_name + mobile combination
-                const [existingCustomer] = await connection.query(
-                    'SELECT id, CRN FROM customers WHERE CRN = ? OR (loan_card_no = ? AND c_name = ? AND mobile = ?)',
-                    [
-                        record[headerMapping['CRN']], 
-                        record[headerMapping['loan_card_no']], 
-                        record[headerMapping['c_name']], 
-                        record[headerMapping['mobile']]
-                    ]
-                );
+                // Build duplicate check query
+                const duplicateQuery = `
+                    SELECT * FROM customers 
+                    WHERE (phone_no_primary = ? OR (? IS NOT NULL AND email_id = ?))
+                    AND first_name = ?
+                `;
 
-                if (existingCustomer.length > 0) {
-                    // For duplicates, store both the new and existing record data
-                    const [existingRecordData] = await connection.query(
-                        'SELECT CRN, loan_card_no, c_name, mobile FROM customers WHERE id = ?',
-                        [existingCustomer[0].id]
-                    );
-                    
+                const queryParams = [
+                    phone,
+                    email,
+                    email,
+                    firstName
+                ];
+
+                const [existingRecords] = await connection.query(duplicateQuery, queryParams);
+
+                if (existingRecords.length > 0) {
                     duplicates.push({
                         new_record: record,
-                        existing_record: existingRecordData[0]
+                        existing_record: existingRecords[0],
+                        agent_name: agentName,
+                        team_id: validAgents.get(agentName)
                     });
                 } else {
-                    newRecords.push(record);
+                    newRecords.push({
+                        ...record,
+                        agent_name: agentName,
+                        team_id: validAgents.get(agentName)
+                    });
                 }
             }
 
-            const totalRecords = customerData.length;
-            const duplicateCount = duplicates.length;
-            const uniqueRecords = newRecords.length;
-
-            // If there are duplicates, store them temporarily and return the info
-            if (duplicates.length > 0) {
-                const uploadId = uuid();
-                uploadDataStore.set(uploadId, {
-                    duplicates,
-                    newRecords,
-                    headerMapping,
-                    timestamp: Date.now()
-                });
-
+            // If there are invalid agents, return error
+            if (invalidAgentRecords.length > 0) {
                 await connection.rollback();
-                return res.json({
+                return res.status(400).json({
                     success: false,
-                    message: 'Duplicate records found',
-                    duplicates: duplicates.map(d => ({
-                        new_record: d.new_record,
-                        existing_record: d.existing_record
-                    })),
-                    duplicateCount,
-                    totalRecords,
-                    uniqueRecords,
-                    uploadId
+                    message: 'Invalid agent names found',
+                    invalidRecords: invalidAgentRecords
                 });
             }
 
             // Generate a unique upload ID
             const uploadId = uuid();
             
-            // Store the processed data
+            // Store the processed data with agent information
             uploadDataStore.set(uploadId, {
                 newRecords,
+                duplicates,
                 headerMapping,
-                validAgents
+                validAgents: Object.fromEntries(validAgents)
             });
 
             await connection.commit();
-            connection.release();
 
-            res.status(200).json({ 
-                message: 'Data processed successfully',
-                totalRecords,
-                duplicateCount,
-                uniqueRecords,
+            res.json({
+                success: true,
+                message: 'Upload processed successfully',
+                duplicates: duplicates.map(d => ({
+                    new_record: d.new_record,
+                    existing_record: d.existing_record,
+                    agent_name: d.agent_name
+                })),
+                duplicateCount: duplicates.length,
+                totalRecords: customerData.length,
+                uniqueRecords: newRecords.length,
                 uploadId
             });
 
         } catch (error) {
             await connection.rollback();
-            connection.release();
             throw error;
+        } finally {
+            connection.release();
         }
+
     } catch (error) {
-        console.error('Error in uploadCustomerData:', error);
+        console.error('Error processing upload:', error);
         res.status(500).json({ 
-            message: 'Failed to process data',
+            success: false,
+            message: 'Failed to process upload',
             error: error.message
         });
     }
@@ -241,34 +233,20 @@ export const confirmUpload = async (req, res) => {
             });
         }
 
-        const { duplicates, newRecords, headerMapping } = uploadData;
+        const { duplicates = [], newRecords = [], headerMapping } = uploadData;
         const pool = await connectDB();
         connection = await pool.getConnection();
 
         await connection.beginTransaction();
 
-        // Alter the CRN column to support longer values
-        const alterTableQuery = `
-            ALTER TABLE customers 
-            MODIFY COLUMN CRN VARCHAR(50)
-        `;
-        try {
-            await connection.query(alterTableQuery);
-        } catch (error) {
-            // If error is "Duplicate column" or "Column already exists", we can proceed
-            if (!error.message.includes('Duplicate') && !error.message.includes('already exists')) {
-                throw error;
-            }
-        }
-
         // Process new records first
-        if (newRecords.length > 0) {
+        if (newRecords && newRecords.length > 0) {
             // Get the latest C_unique_id
             const [lastIdResult] = await connection.query(
                 'SELECT C_unique_id FROM customers ORDER BY CAST(SUBSTRING(C_unique_id, 4) AS UNSIGNED) DESC LIMIT 1'
             );
             
-            const lastId = lastIdResult[0]?.C_unique_id || 'DF_0';
+            const lastId = lastIdResult[0]?.C_unique_id || 'MC_0';
             const lastNumericPart = parseInt(lastId.split('_')[1]) || 0;
             let nextId = lastNumericPart + 1;
 
@@ -283,9 +261,9 @@ export const confirmUpload = async (req, res) => {
                 const values = [];
                 columnNames.forEach(colName => {
                     if (colName === 'C_unique_id') {
-                        values.push(`DF_${nextId++}`);
+                        values.push(`MC_${nextId++}__1`);
                     } else {
-                        const value = colName === 'paid_date' 
+                        const value = colName === 'date_of_birth' 
                             ? formatDate(record[headerMapping[colName]])
                             : record[headerMapping[colName]] || null;
                         values.push(value);
@@ -299,70 +277,57 @@ export const confirmUpload = async (req, res) => {
         }
 
         // Handle duplicate records based on individual actions
-        if (duplicates.length > 0) {
+        if (duplicates && duplicates.length > 0) {
             for (const [index, duplicate] of duplicates.entries()) {
                 const action = duplicateActions[index] || 'skip';
+                if (action === 'skip') continue;
+
                 const record = duplicate.new_record;
-                
-                if (action === 'skip') {
-                    continue;
-                }
+                const existingRecord = duplicate.existing_record;
                 
                 if (action === 'append') {
-                    // Get the latest C_unique_id again as it might have changed
-                    const [lastIdResult] = await connection.query(
-                        'SELECT C_unique_id FROM customers ORDER BY CAST(SUBSTRING(C_unique_id, 4) AS UNSIGNED) DESC LIMIT 1'
+                    // Get the base C_unique_id from the existing record
+                    const baseId = existingRecord.C_unique_id.split('__')[0]; // Get the base part before any __
+                    
+                    // Find all records with this base ID to determine next suffix
+                    const [suffixResults] = await connection.query(
+                        'SELECT C_unique_id FROM customers WHERE C_unique_id LIKE ? OR C_unique_id = ? ORDER BY CAST(SUBSTRING_INDEX(C_unique_id, "__", -1) AS UNSIGNED) DESC LIMIT 1',
+                        [`${baseId}__%`, baseId]
                     );
                     
-                    const lastId = lastIdResult[0]?.C_unique_id || 'DF_0';
-                    const lastNumericPart = parseInt(lastId.split('_')[1]) || 0;
-                    const newCUniqueId = `DF_${lastNumericPart + 1}`;
+                    let newCUniqueId;
+                    if (suffixResults.length === 0 || suffixResults[0].C_unique_id === baseId) {
+                        // No suffixed records exist yet
+                        newCUniqueId = `${baseId}__1`;
+                    } else {
+                        // Get the highest suffix and increment
+                        const currentId = suffixResults[0].C_unique_id;
+                        const currentSuffix = parseInt(currentId.split('__')[1]);
+                        newCUniqueId = `${baseId}__${currentSuffix + 1}`;
+                    }
 
                     // Get column names
                     const [columns] = await connection.query('SHOW COLUMNS FROM customers');
                     const columnNames = columns.map(col => col.Field)
                         .filter(name => !['id', 'date_created', 'last_updated', 'scheduled_at'].includes(name));
 
-                    // Find the highest suffix number for this CRN
-                    const [suffixResult] = await connection.query(
-                        'SELECT CRN FROM customers WHERE CRN LIKE ?',
-                        [`${record[headerMapping['CRN']]}\\_%`]
-                    );
-                    
-                    let suffix = 1;
-                    if (suffixResult.length > 0) {
-                        const suffixes = suffixResult.map(r => {
-                            const match = r.CRN.match(/.*__(\d+)$/);
-                            return match ? parseInt(match[1]) : 0;
-                        });
-                        suffix = Math.max(...suffixes) + 1;
-                    }
-
-                    const newCRN = `${record[headerMapping['CRN']]}__${suffix}`;
                     const insertQuery = `INSERT INTO customers (${columnNames.join(', ')}) VALUES (${columnNames.map(() => '?').join(', ')})`;
                     
                     const values = columnNames.map(colName => {
                         if (colName === 'C_unique_id') {
                             return newCUniqueId;
+                        } else {
+                            const value = colName === 'date_of_birth'
+                                ? formatDate(record[headerMapping[colName]])
+                                : record[headerMapping[colName]] || null;
+                            return value;
                         }
-                        if (colName === 'CRN') {
-                            return newCRN;
-                        }
-                        const value = colName === 'paid_date'
-                            ? formatDate(record[headerMapping[colName]])
-                            : record[headerMapping[colName]] || null;
-                        return value;
                     });
 
                     const [insertResult] = await connection.query(insertQuery, values);
                     recordsUploaded += insertResult.affectedRows;
-                } else if (action === 'replace') {
-                    // Keep the existing C_unique_id when replacing records
-                    const [existingRecord] = await connection.query(
-                        'SELECT C_unique_id FROM customers WHERE CRN = ?',
-                        [record[headerMapping['CRN']]]
-                    );
 
+                } else if (action === 'replace') {
                     // Get column names for update
                     const [columns] = await connection.query('SHOW COLUMNS FROM customers');
                     const columnNames = columns.map(col => col.Field)
@@ -370,15 +335,18 @@ export const confirmUpload = async (req, res) => {
 
                     const updateQuery = `UPDATE customers SET ${
                         columnNames.map(col => `${col} = ?`).join(', ')
-                    } WHERE CRN = ?`;
+                    } WHERE phone_no_primary = ? AND first_name = ?`;
 
                     const values = columnNames.map(colName => {
-                        const value = colName === 'paid_date'
+                        const value = colName === 'date_of_birth'
                             ? formatDate(record[headerMapping[colName]])
                             : record[headerMapping[colName]] || null;
                         return value;
                     });
-                    values.push(record[headerMapping['CRN']]); // Add CRN for WHERE clause
+
+                    // Add WHERE clause values
+                    values.push(record[headerMapping['phone_no_primary']]);
+                    values.push(record[headerMapping['first_name']]);
 
                     const [updateResult] = await connection.query(updateQuery, values);
                     recordsUploaded += updateResult.affectedRows;

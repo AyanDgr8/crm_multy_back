@@ -30,56 +30,71 @@ export const getReminders = async (req, res) => {
 
         const role = userInfo[0].role_name;
         const teamId = userInfo[0].team_id;
+        const userId = userInfo[0].user_id;
 
         let sql;
         const params = [];
 
-        // Build query based on role
-        const baseFields = `
-            c.*, u.team_id,
-            TIMESTAMPDIFF(MINUTE, NOW(), c.scheduled_at) as minutes_until_call
-        `;
-
         // Define time thresholds for reminders (15 mins, 5 mins, 1 min)
         const timeCondition = `
-            c.scheduled_at IS NOT NULL
-            AND c.scheduled_at > NOW()
+            s.scheduled_at IS NOT NULL
+            AND s.scheduled_at > NOW()
             AND (
-                TIMESTAMPDIFF(MINUTE, NOW(), c.scheduled_at) <= 15
-                OR TIMESTAMPDIFF(MINUTE, NOW(), c.scheduled_at) <= 5
-                OR TIMESTAMPDIFF(MINUTE, NOW(), c.scheduled_at) <= 1
+                TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) <= 15
+                OR TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) <= 5
+                OR TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) <= 1
             )
         `;
 
+        // Base fields to select
+        const baseFields = `
+            s.*, c.*, u.team_id,
+            TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) as minutes_until_call
+        `;
+
         if (role === 'super_admin' || role === 'it_admin' || role === 'business_head') {
-            // Can see all reminders
+            // Can see reminders they created or are assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                LEFT JOIN users u ON u.username = c.agent_name
-                WHERE ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                LEFT JOIN users u ON u.username = s.assigned_to
+                WHERE (
+                    s.created_by = ? -- reminders they created
+                    OR s.assigned_to = ? -- reminders assigned to them
+                )
+                AND ${timeCondition}
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
+            params.push(userId, username);
         } else if (role === 'team_leader') {
-            // Can see team's reminders
+            // Can see reminders they created for their team or assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                JOIN users u ON u.username = c.agent_name
-                WHERE u.team_id = ?
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                JOIN users u ON u.username = s.assigned_to
+                WHERE (
+                    (s.created_by = ? AND u.team_id = ?) -- reminders they created for their team
+                    OR s.assigned_to = ? -- reminders assigned to them
+                )
                 AND ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
-            params.push(teamId);
+            params.push(userId, teamId, username);
         } else {
-            // Regular user - can only see their own reminders
+            // Regular users - can only see reminders assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                JOIN users u ON u.username = c.agent_name
-                WHERE c.agent_name = ?
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                JOIN users u ON u.username = s.assigned_to
+                WHERE s.assigned_to = ?
                 AND ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
             params.push(username);
         }
@@ -147,56 +162,69 @@ export const getAllReminders = async (req, res) => {
 
         const role = userInfo[0].role_name;
         const teamId = userInfo[0].team_id;
+        const userId = userInfo[0].user_id;
 
         let sql;
         const params = [];
 
-        // Build query based on role
+        // Base fields to select
         const baseFields = `
-            c.*,
-            u.team_id,
-            t.team_name,
-            TIMESTAMPDIFF(MINUTE, NOW(), c.scheduled_at) as minutes_until_call
+            s.*, c.*, u.team_id, t.team_name,
+            TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) as minutes_until_call
         `;
 
-        // Define time thresholds for reminders
+        // Define time condition for future reminders
         const timeCondition = `
-            c.scheduled_at IS NOT NULL
-            AND c.scheduled_at > NOW()
+            s.scheduled_at IS NOT NULL
+            AND s.scheduled_at > NOW()
         `;
 
         if (role === 'super_admin' || role === 'it_admin' || role === 'business_head') {
-            // Can see all reminders
+            // Can see reminders they created or are assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                LEFT JOIN users u ON u.username = c.agent_name
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                LEFT JOIN users u ON u.username = s.assigned_to
                 LEFT JOIN teams t ON t.id = u.team_id
-                WHERE ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                WHERE (
+                    s.created_by = ? -- reminders they created
+                    OR s.assigned_to = ? -- reminders assigned to them
+                )
+                AND ${timeCondition}
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
+            params.push(userId, username);
         } else if (role === 'team_leader') {
-            // Can see team's reminders
+            // Can see reminders they created for their team or assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                JOIN users u ON u.username = c.agent_name
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                JOIN users u ON u.username = s.assigned_to
                 LEFT JOIN teams t ON t.id = u.team_id
-                WHERE u.team_id = ?
+                WHERE (
+                    (s.created_by = ? AND u.team_id = ?) -- reminders they created for their team
+                    OR s.assigned_to = ? -- reminders assigned to them
+                )
                 AND ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
-            params.push(teamId);
+            params.push(userId, teamId, username);
         } else {
-            // Regular user - can only see their own reminders
+            // Regular users - can only see reminders assigned to them
             sql = `
                 SELECT ${baseFields}
-                FROM customers c
-                LEFT JOIN users u ON u.username = c.agent_name
+                FROM scheduler s
+                JOIN customers c ON c.id = s.customer_id
+                LEFT JOIN users u ON u.username = s.assigned_to
                 LEFT JOIN teams t ON t.id = u.team_id
-                WHERE c.agent_name = ?
+                WHERE s.assigned_to = ?
                 AND ${timeCondition}
-                ORDER BY c.scheduled_at ASC
+                AND s.status = 'pending'
+                ORDER BY s.scheduled_at ASC
             `;
             params.push(username);
         }

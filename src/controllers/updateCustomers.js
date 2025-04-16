@@ -35,39 +35,26 @@ export const updateCustomer = async (req, res) => {
 
       // Define allowed fields and their types
       const allowedFields = {
-        loan_card_no: 'string',
-        c_name: 'string',
-        product: 'string',
-        CRN: 'string',
-        bank_name: 'string',
-        banker_name: 'string',
+        first_name: 'string',
+        middle_name: 'string',
+        last_name: 'string',
+        phone_no_primary: 'number',
+        phone_no_secondary: 'number',
+        whatsapp_num: 'number',
+        email_id: 'string',
+        date_of_birth: 'date',
+        gender: 'string',
+        address: 'string',
+        country: 'string',
+        company_name: 'string',
+        designation: 'string',
+        website: 'string',
+        other_location: 'string',
+        contact_type: 'string',
+        source: 'string',
+        disposition: 'string',
         agent_name: 'string',
-        tl_name: 'string',
-        fl_supervisor: 'string',
-        DPD_vintage: 'date',
-        POS: 'number',
-        emi_AMT: 'number',
-        loan_AMT: 'number',
-        paid_AMT: 'number',
-        settl_AMT: 'number',
-        shots: 'string',
-        resi_address: 'string',
-        pincode: 'string',
-        office_address: 'string',
-        mobile: 'string',
-        ref_mobile: 'string',
-        mobile_3: 'string',
-        mobile_4: 'string',
-        mobile_5: 'string',
-        mobile_6: 'string',
-        mobile_7: 'string',
-        mobile_8: 'string',
-        calling_code: 'string',
-        calling_feedback: 'string',
-        field_feedback: 'string',
-        new_track_no: 'string',
-        field_code: 'string',
-        paid_date: 'date',
+        comment: 'string',
         scheduled_at: 'datetime'
       };
 
@@ -106,7 +93,7 @@ export const updateCustomer = async (req, res) => {
 
       // Check for recent updates to prevent duplicate entries
       const fieldToUpdate = Object.keys(updates)[0];
-      const newValue = normalizeDateValue(Object.values(updates)[0], allowedFields[fieldToUpdate]);
+      const newValue = normalizeDateValue(Object.values(updates)[0], allowedFields[fieldToUpdate] || 'string');
       
       const [recentUpdates] = await connection.execute(
         `SELECT * FROM updates_customer 
